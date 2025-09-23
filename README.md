@@ -1,1 +1,142 @@
-# Catálogo (Cloudflare Pages + D1)\nAPI e site estático para um **catálogo de produtos** com **compra** (baixa de estoque) – tudo hospedado no **Cloudflare Pages**, sem precisar de configuração de CORS quando o **frontend vive no mesmo domínio** da API. **URL:** https://catalogo-products.pages.dev • **Swagger:** https://catalogo-products.pages.dev/docs/\n\n## Visão geral\nFrontend (HTML/CSS/JS) e API (Pages Functions) no mesmo projeto; Banco: Cloudflare D1 (SQLite gerenciado); Objetivo: alunos consumirem a API usando apenas HTML + CSS + JS (sem framework, sem CORS); Catálogo populado com 500 produtos; compras baixam estoque. ⚠️ Para evitar CORS, hospede o front no MESMO domínio do Pages.\n\n## Como consumir (sem CORS)\nUse paths relativos no mesmo domínio: `fetch('/api/products?page=1&pageSize=10')` • `fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({buyer:{name:'Cliente',email:'c@demo.com'},items:[{productId:'PROD-0001',qty:1}]})})`\n\n## Endpoints\n**GET /api/products** → lista paginada. Params: `page` (default 1), `pageSize` (default 10). Ex.: `/api/products?page=1&pageSize=10`. Resumo de resposta: `{ meta:{ total, page, pageSize }, products:[{ id,title,slug,category,brand,description, price:{currency:'BRL',original,discount_percent,final}, stock:{quantity,sku,warehouse}, rating:{average,count}, created_at,updated_at }] }`.\n**POST /api/orders** → cria pedido e baixa estoque. Body: `{ "buyer": { "name":"Cliente", "email":"c@demo.com" }, "items":[{ "productId":"PROD-0001", "qty":1 }] }`. Resumo de resposta: `{ order:{ id, created_at, buyer:{name,email}, total, items:[{productId,qty,unit_price,line_total}] } }`. Erros: `400` (payload inválido), `409` (estoque insuficiente).\n\n## Exemplos\n**fetch (JS):** `const r=await fetch('/api/products?page=1&pageSize=10'); const data=await r.json();` • `await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({buyer:{name:'Cliente',email:'c@demo.com'},items:[{productId:'PROD-0001',qty:1}]})});`\n**curl:** `curl "https://catalogo-products.pages.dev/api/products?page=1&pageSize=10"` • `curl -X POST "https://catalogo-products.pages.dev/api/orders" -H "Content-Type: application/json" -d '{"buyer":{"name":"Cliente","email":"c@demo.com"},"items":[{"productId":"PROD-0001","qty":1}]}'`\n\n## Formatos\n**Produto:** `{ id,title,slug,category,brand,description, price:{currency,original,discount_percent,final}, stock:{quantity,sku,warehouse}, rating:{average,count}, created_at,updated_at }` • **Pedido:** `{ id,created_at,buyer:{name,email},total,items:[{productId,qty,unit_price,line_total}] }`.\n\n## Estrutura do projeto\n`/index.html` (exemplo front) • `/docs/index.html` (Swagger UI) • `/docs/openapi.yaml` (OpenAPI) • `/functions/api/products.js` (GET) • `/functions/api/orders.js` (POST) • (opcional) `/functions/index.js` para redirecionar `/`.\n\n## Banco (Cloudflare D1)\nTabelas: `products(id PK, title, slug, category, brand, description, price_original, price_discount_percent, price_final, sku, stock_quantity, warehouse, rating_average, rating_count, created_at, updated_at)` • `orders(id PK, created_at, buyer_name, buyer_email, total)` • `order_items(id PK, order_id FK, product_id FK, qty, unit_price, line_total)`.\n**Binding Pages → Functions → Bindings:** D1 database **Name:** `DB` → **Database:** `catalogo_db`.\n\n## Publicar mudanças\nRepo conectado ao Cloudflare Pages com deploy automático: push no `main` → novo deploy. Verifique em Deployments → View details → **Functions**. Para redeploy manual: `git commit --allow-empty -m "redeploy" && git push`.\n\n## Dicas & troubleshooting\nSem CORS: front e API no mesmo domínio (use `fetch('/api/...')`). **Erro 1101**: veja logs em Deployments → View details → Functions → View logs (SQL inválido, etc.). **Sem dados?** Banco já vem com 500 itens; se zerou, repopule manualmente no D1 ou reative temporariamente um seed. **Reset D1:** `DELETE FROM order_items; DELETE FROM orders; DELETE FROM products;` (repopule depois, se necessário).\n\n## Licença\nUso educacional. Ajuste conforme sua necessidade.\n\n**Nota p/ instrutor:** para cada aluno ter sua própria API sem CORS, peça para cada um *forkar* o repo e conectar ao Cloudflare Pages com seu próprio D1; cada fork terá URL/banco próprios.
+# Catálogo (Cloudflare Pages + D1)
+
+API e site estático para um **catálogo de produtos** com **compra** (baixa de estoque), hospedado no **Cloudflare Pages** usando **Pages Functions** e banco **D1**. Se o frontend estiver no **mesmo domínio** da API, os alunos consomem tudo com **HTML + CSS + JS** (sem CORS).
+
+**Produção:** https://catalogo-products.pages.dev  
+**Swagger:** https://catalogo-products.pages.dev/docs/
+
+---
+
+## Sumário
+- [Visão geral](#visão-geral)
+- [Como consumir (sem CORS)](#como-consumir-sem-cors)
+- [Endpoints](#endpoints)
+  - [GET /api/products](#get-apiproducts)
+  - [POST /api/orders](#post-apiorders)
+- [Exemplos de uso](#exemplos-de-uso)
+  - [fetch (JS no navegador)](#fetch-js-no-navegador)
+  - [curl](#curl)
+- [Modelos de dados](#modelos-de-dados)
+- [Estrutura do projeto](#estrutura-do-projeto)
+- [Cloudflare Pages & D1 (instrutor)](#cloudflare-pages--d1-instrutor)
+- [Publicar mudanças](#publicar-mudanças)
+- [Troubleshooting](#troubleshooting)
+- [Licença](#licença)
+
+---
+
+## Visão geral
+
+- **Frontend + API** no mesmo projeto Pages → chamadas **same-origin** (sem CORS).
+- **Banco:** Cloudflare **D1** (SQLite gerenciado).
+- **Catálogo:** 500 produtos pré-populados (estoque diminui após compra).
+- **Swagger:** documentação pronta em `/docs`.
+
+> Para **não ter CORS**, publique seu frontend dentro deste mesmo projeto (mesmo domínio da API).
+
+---
+
+## Como consumir (sem CORS)
+
+No seu HTML/JS hospedado **no mesmo domínio**:
+
+```js
+// listar produtos
+const r = await fetch('/api/products?page=1&pageSize=10');
+const data = await r.json();
+
+// criar pedido
+await fetch('/api/orders', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    buyer: { name: 'Cliente', email: 'c@demo.com' },
+    items: [{ productId: 'PROD-0001', qty: 1 }]
+  })
+});
+```
+
+## Endpoints
+GET /api/products
+
+Lista produtos paginado.
+
+Query params
+
+page (int, padrão 1)
+
+pageSize (int, padrão 10)
+
+## Exemplo
+GET /api/products?page=1&pageSize=10
+
+## Resposta (exemplo resumido)
+
+{
+  "meta": { "total": 500, "page": 1, "pageSize": 10 },
+  "products": [
+    {
+      "id": "PROD-0001",
+      "title": "Produto 1",
+      "slug": "produto-1",
+      "category": "casa",
+      "brand": "Marca 2",
+      "description": "Descrição do produto 1",
+      "price": { "currency": "BRL", "original": 11.01, "discount_percent": 0, "final": 11.01 },
+      "stock": { "quantity": 21, "sku": "SKU-PROD-0001", "warehouse": "RJ" },
+      "rating": { "average": 3.2, "count": 12 },
+      "created_at": "2025-09-23T...",
+      "updated_at": "2025-09-23T..."
+    }
+  ]
+}
+
+
+## Exemplos de uso
+- fetch (JS no navegador)
+
+```
+<script>
+async function carregarProdutos(page = 1, pageSize = 10) {
+  const r = await fetch(`/api/products?page=${page}&pageSize=${pageSize}`);
+  const data = await r.json();
+  console.log('Total:', data.meta.total);
+  console.log('Primeiro produto:', data.products[0]);
+}
+
+async function comprar(prodId, qty = 1) {
+  const r = await fetch('/api/orders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      buyer: { name: 'Cliente', email: 'c@demo.com' },
+      items: [{ productId: prodId, qty }]
+    })
+  });
+
+  const data = await r.json();
+  if (!r.ok) {
+    alert('Erro: ' + (data.error || 'falha na compra'));
+    return;
+  }
+  alert('Pedido criado: ' + data.order.id + ' total R$ ' + data.order.total);
+}
+</script>
+
+```
+
+## Modelos de dados
+{
+  "id": "PROD-0001",
+  "title": "Produto 1",
+  "slug": "produto-1",
+  "category": "casa",
+  "brand": "Marca 2",
+  "description": "Descrição...",
+  "price": { "currency": "BRL", "original": 11.01, "discount_percent": 0, "final": 11.01 },
+  "stock": { "quantity": 21, "sku": "SKU-PROD-0001", "warehouse": "RJ" },
+  "rating": { "average": 3.2, "count": 12 },
+  "created_at": "2025-09-23T...",
+  "updated_at": "2025-09-23T..."
+}
+
