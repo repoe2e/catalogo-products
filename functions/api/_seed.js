@@ -1,42 +1,131 @@
-// TEMPORÁRIO: use 1x para popular 500 produtos, depois remova este arquivo e redeploy.
-export async function onRequestGet({ env, request }) {
-  const url = new URL(request.url);
-  const token = url.searchParams.get('token');
-  if (token !== 'E2E_SEED_123') return new Response('forbidden', { status: 403 });
+// functions/api/_seed.js
+const TOKEN = "E2E_SEED_123";
 
-  const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM products').first();
-  if (count.c > 0) return new Response('already seeded', { status: 200 });
+export async function onRequestGet({ request, env }) {
+  try {
+    const url = new URL(request.url);
+    const token = url.searchParams.get("token");
+    if (token !== TOKEN) {
+      return new Response("forbidden", { status: 403 });
+    }
 
-  function rnd(min, max){ return Math.random()*(max-min)+min; }
-  function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
-  function pad(n){ return String(n).padStart(4, '0'); }
+    // 1) Schema (idempotente)
+    const schema = `
+      PRAGMA foreign_keys = ON;
 
-  const cats = ["Eletrônicos/Smartphones","Eletrônicos/Fones de Ouvido","Casa/Cozinha","Beleza/Cuidados Pessoais","Informática/Periféricos","Games/Consoles","Esportes/Fitness","Vestuário/Camisetas","Acessórios/Relógios","Ferramentas/Oficina"];
-  const now = new Date().toISOString();
+      CREATE TABLE IF NOT EXISTS products (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        slug TEXT,
+        category TEXT,
+        brand TEXT,
+        description TEXT,
+        price_original REAL NOT NULL,
+        price_discount_percent INTEGER NOT NULL DEFAULT 0,
+        price_final REAL NOT NULL,
+        sku TEXT,
+        stock_quantity INTEGER NOT NULL DEFAULT 0,
+        warehouse TEXT,
+        rating_average REAL,
+        rating_count INTEGER,
+        created_at TEXT,
+        updated_at TEXT
+      );
 
-  await env.DB.exec('BEGIN IMMEDIATE TRANSACTION;');
-  for (let i=1;i<=500;i++){
-    const id = `PROD-${pad(i)}`;
-    const title = `Produto ${i} ${['Pro','Max','Plus','Lite','Go'][i%5]}`;
-    const slug = title.toLowerCase().replace(/\s+/g,'-');
-    const category = pick(cats);
-    const brand = `Marca ${String.fromCharCode(65+(i%26))}`;
-    const description = `Descrição do ${title}.`;
-    const original = Number(rnd(20,5000).toFixed(2));
-    const discount = Math.floor(rnd(0,40));
-    const final = Number((original*(1-discount/100)).toFixed(2));
-    const qty = Math.floor(rnd(0,1000));
-    const sku = `SKU-${Math.floor(rnd(100000,999999))}`;
-    const warehouse = pick(["SP-01","SP-02","RJ-01","MG-01"]);
-    const ratingAvg = Number(rnd(1,5).toFixed(1));
-    const ratingCount = Math.floor(rnd(0,2000));
+      CREATE TABLE IF NOT EXISTS orders (
+        id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL,
+        buyer_name TEXT,
+        buyer_email TEXT,
+        total REAL NOT NULL
+      );
 
-    await env.DB.prepare(`
-      INSERT INTO products
-      (id,title,slug,category,brand,description,price_original,price_discount_percent,price_final,stock_quantity,sku,warehouse,rating_average,rating_count,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    `).bind(id,title,slug,category,brand,description,original,discount,final,qty,sku,warehouse,ratingAvg,ratingCount,now,now).run();
+      CREATE TABLE IF NOT EXISTS order_items (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        qty INTEGER NOT NULL,
+        unit_price REAL NOT NULL,
+        line_total REAL NOT NULL,
+        FOREIGN KEY(order_id) REFERENCES orders(id),
+        FOREIGN KEY(product_id) REFERENCES products(id)
+      );
+    `;
+    await env.DB.exec(schema);
+
+    // Já tem dados?
+    const row = await env.DB
+      .prepare("SELECT COUNT(*) AS c FROM products")
+      .first();
+    if (row && row.c > 0) {
+      return json({ status: "already seeded", count: row.c });
+    }
+
+    // 2) Gerar 500 produtos
+    const now = new Date().toISOString();
+    const categories = ["eletronicos", "casa", "moda", "esportes"];
+    const warehouses = ["SP", "RJ", "MG", "BA"];
+
+    // Inserção em lotes para evitar "too many SQL variables"
+    const BATCH = 50;
+    let batch = [];
+
+    const stmt = env.DB.prepare(`
+      INSERT OR IGNORE INTO products
+      (id, title, slug, category, brand, description,
+       price_original, price_discount_percent, price_final,
+       sku, stock_quantity, warehouse, rating_average,
+       rating_count, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    for (let i = 1; i <= 500; i++) {
+      const id = `PROD-${String(i).padStart(4, "0")}`;
+      const title = `Produto ${i}`;
+      const slug = `produto-${i}`;
+      const category = categories[i % categories.length];
+      const brand = `Marca ${((i % 10) + 1)}`;
+      const description = `Descrição do produto ${i}`;
+      const price_original = 10 + (i % 90) + (i / 100);
+      const price_discount_percent = (i % 5 === 0) ? 10 : 0;
+      const price_final = +(price_original * (1 - price_discount_percent / 100)).toFixed(2);
+      const sku = `SKU-${id}`;
+      const stock_quantity = 20 + (i % 30);
+      const warehouse = warehouses[i % warehouses.length];
+      const rating_average = Math.min(5, 3 + (i % 20) / 10);
+      const rating_count = 10 + (i % 200);
+
+      batch.push(
+        stmt.bind(
+          id, title, slug, category, brand, description,
+          price_original, price_discount_percent, price_final,
+          sku, stock_quantity, warehouse, rating_average,
+          rating_count, now, now
+        )
+      );
+
+      if (batch.length === BATCH) {
+        await env.DB.batch(batch);
+        batch = [];
+      }
+    }
+    if (batch.length) {
+      await env.DB.batch(batch);
+    }
+
+    const row2 = await env.DB
+      .prepare("SELECT COUNT(*) AS c FROM products")
+      .first();
+
+    return json({ status: "seed ok", inserted: row2?.c ?? 0 });
+  } catch (e) {
+    return json({ error: e.message || String(e) }, 500);
   }
-  await env.DB.exec('COMMIT;');
-  return new Response('seed ok', { status: 201 });
+}
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 }
