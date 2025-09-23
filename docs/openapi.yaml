@@ -1,0 +1,53 @@
+openapi: 3.0.3
+info:
+  title: Catálogo (Cloudflare Pages)
+  version: 1.0.0
+servers:
+  - url: /
+paths:
+  /api/products:
+    get:
+      summary: Lista paginada de produtos
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - in: query
+          name: q
+          schema: { type: string }
+        - in: query
+          name: category
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+  /api/orders:
+    post:
+      summary: Cria um pedido e baixa estoque
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                buyer:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    email: { type: string, format: email }
+                items:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      productId: { type: string }
+                      qty: { type: integer, minimum: 1 }
+      responses:
+        '201': { description: Criado }
+        '400': { description: Requisição inválida }
+        '404': { description: Produto não encontrado }
+        '409': { description: Estoque insuficiente }
