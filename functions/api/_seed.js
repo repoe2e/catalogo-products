@@ -5,14 +5,10 @@ export async function onRequestGet({ request, env }) {
   try {
     const url = new URL(request.url);
     const token = url.searchParams.get("token");
-    if (token !== TOKEN) {
-      return new Response("forbidden", { status: 403 });
-    }
+    if (token !== TOKEN) return json({ error: "forbidden" }, 403);
 
-    // 1) Schema (idempotente)
-    const schema = `
-      PRAGMA foreign_keys = ON;
-
+    // 1) Schema (idempotente) — sem PRAGMA
+    await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS products (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
@@ -31,7 +27,9 @@ export async function onRequestGet({ request, env }) {
         created_at TEXT,
         updated_at TEXT
       );
+    `).run();
 
+    await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS orders (
         id TEXT PRIMARY KEY,
         created_at TEXT NOT NULL,
@@ -39,7 +37,9 @@ export async function onRequestGet({ request, env }) {
         buyer_email TEXT,
         total REAL NOT NULL
       );
+    `).run();
 
+    await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS order_items (
         id TEXT PRIMARY KEY,
         order_id TEXT NOT NULL,
@@ -50,27 +50,22 @@ export async function onRequestGet({ request, env }) {
         FOREIGN KEY(order_id) REFERENCES orders(id),
         FOREIGN KEY(product_id) REFERENCES products(id)
       );
-    `;
-    await env.DB.exec(schema);
+    `).run();
 
     // Já tem dados?
-    const row = await env.DB
-      .prepare("SELECT COUNT(*) AS c FROM products")
-      .first();
-    if (row && row.c > 0) {
-      return json({ status: "already seeded", count: row.c });
+    const existed = await env.DB.prepare(
+      "SELECT COUNT(*) AS c FROM products"
+    ).first();
+    if (existed?.c > 0) {
+      return json({ status: "already seeded", count: existed.c });
     }
 
-    // 2) Gerar 500 produtos
+    // 2) Gerar 500 produtos (em lotes p/ evitar 'too many variables')
     const now = new Date().toISOString();
     const categories = ["eletronicos", "casa", "moda", "esportes"];
     const warehouses = ["SP", "RJ", "MG", "BA"];
 
-    // Inserção em lotes para evitar "too many SQL variables"
-    const BATCH = 50;
-    let batch = [];
-
-    const stmt = env.DB.prepare(`
+    const insert = env.DB.prepare(`
       INSERT OR IGNORE INTO products
       (id, title, slug, category, brand, description,
        price_original, price_discount_percent, price_final,
@@ -78,6 +73,9 @@ export async function onRequestGet({ request, env }) {
        rating_count, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+
+    const BATCH = 50;
+    let batch = [];
 
     for (let i = 1; i <= 500; i++) {
       const id = `PROD-${String(i).padStart(4, "0")}`;
@@ -96,7 +94,7 @@ export async function onRequestGet({ request, env }) {
       const rating_count = 10 + (i % 200);
 
       batch.push(
-        stmt.bind(
+        insert.bind(
           id, title, slug, category, brand, description,
           price_original, price_discount_percent, price_final,
           sku, stock_quantity, warehouse, rating_average,
@@ -109,15 +107,13 @@ export async function onRequestGet({ request, env }) {
         batch = [];
       }
     }
-    if (batch.length) {
-      await env.DB.batch(batch);
-    }
+    if (batch.length) await env.DB.batch(batch);
 
-    const row2 = await env.DB
+    const after = await env.DB
       .prepare("SELECT COUNT(*) AS c FROM products")
       .first();
 
-    return json({ status: "seed ok", inserted: row2?.c ?? 0 });
+    return json({ status: "seed ok", inserted: after?.c ?? 0 });
   } catch (e) {
     return json({ error: e.message || String(e) }, 500);
   }
