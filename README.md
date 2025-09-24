@@ -42,10 +42,17 @@ No seu HTML/JS hospedado **no mesmo domínio**:
 
 ```js
 // listar produtos
+## Como consumir a API
+
+### A) Mesmo domínio (sem CORS)
+Se o seu HTML/JS está no **mesmo projeto Pages** da API:
+
+```js
+// listar produtos
 const r = await fetch('/api/products?page=1&pageSize=10');
 const data = await r.json();
 
-// criar pedido
+// criar um pedido
 await fetch('/api/orders', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
@@ -54,6 +61,7 @@ await fetch('/api/orders', {
     items: [{ productId: 'PROD-0001', qty: 1 }]
   })
 });
+
 ```
 
 ## Endpoints
