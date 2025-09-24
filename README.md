@@ -1,6 +1,7 @@
 # Catálogo (Cloudflare Pages + D1)
 
-API e site estático para um **catálogo de produtos** com **compra** (baixa de estoque), hospedado no **Cloudflare Pages** usando **Pages Functions** e banco **D1**. Se o frontend estiver no **mesmo domínio** da API, os alunos consomem tudo com **HTML + CSS + JS** (sem CORS).
+API e site estático para catálogo de produtos com compra (baixa de estoque) hospedado no Cloudflare Pages com Pages Functions e banco D1.
+A API já envia os cabeçalhos CORS; portanto o front-end pode ser hospedado no mesmo domínio ou em outro (ex.: GitHub Pages) usando apenas HTML + CSS + JS.
 
 **Produção:** https://catalogo-products.pages.dev  
 **Swagger:** https://catalogo-products.pages.dev/docs/
